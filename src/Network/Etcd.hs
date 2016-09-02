@@ -22,10 +22,10 @@ module Network.Etcd
     , get
     , set
     , create
-    , wait
-    , waitIndex
-    , waitRecursive
-    , waitIndexRecursive
+--  , wait
+--  , waitIndex
+--  , waitRecursive
+--  , waitIndexRecursive
 
       -- * Directory operations
     , createDirectory
@@ -137,6 +137,13 @@ type Value = Text
 -- don't make much sense.
 type TTL = Int
 
+data EtcdException
+   = SetException Text
+   | GetException Text
+   | CreateException Text
+   deriving (Show)
+instance Exception EtcdException
+
 
 -- | The 'Node' corresponds to the node object as returned by the etcd API.
 --
@@ -196,7 +203,17 @@ instance FromJSON Node where
 
     parseJSON _ = fail "Response"
 
-
+-- -- | The 'HNode' is a high level version of node
+--
+-- data HNode
+--    = Leaf { _leafKey :: !Key, _leafValue :: !Value }
+--    | HNode { _hNodeKey :: !Key, _hNodeChildren :: [HNode] }
+--
+-- toHNode :: Node -> HNode
+-- toHNode (Node{..}) =
+--    case _nodeNodes of
+--       Just nodes -> HNode { _hNodeKey = _nodeKey, _hNodeChildren = map toHNode nodes }
+--       Nothing    -> Leaf { _leafKey = _nodeKey, _leafValue = fromMaybe "" _nodeValue }
 
 {-|---------------------------------------------------------------------------
 
@@ -268,10 +285,6 @@ httpDELETE url params = do
 runRequest :: IO HR -> IO HR
 runRequest a = catch a (\(e :: SomeException) -> return $ Left $ Error $ T.pack $ show e)
 
-runRequest' :: IO HR -> IO (Maybe Node)
-runRequest' m = either (const Nothing) (Just . _resNode) <$> runRequest m
-
-
 -- | Encode an optional TTL into a param pair.
 ttlParam :: Maybe TTL -> [(Text, Text)]
 ttlParam Nothing    = []
@@ -310,16 +323,22 @@ waitIndexParam i = ("waitIndex", (T.pack $ show i))
 
 
 -- | Get the node at the given key.
-get :: Client -> Key -> IO (Maybe Node)
-get client key =
-    runRequest' $ httpGET (keyUrl client key) []
+get :: Client -> Key -> IO (Node)
+get client key = do
+    hr <- runRequest $ httpGET (keyUrl client key) []
+    case hr of
+        Left (Error err) -> error (T.unpack err)
+        Right res -> return $ _resNode res
 
 
 -- | Set the value at the given key.
-set :: Client -> Key -> Value -> Maybe TTL -> IO (Maybe Node)
-set client key value mbTTL =
-    runRequest' $ httpPUT (keyUrl client key) $
+set :: Client -> Key -> Value -> Maybe TTL -> IO ( Node)
+set client key value mbTTL = do
+    hr <- runRequest $ httpPUT (keyUrl client key) $
         [("value",value)] ++ ttlParam mbTTL
+    case hr of
+        Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
+        Right res -> return $ _resNode res
 
 
 -- | Create a value in the given key. The key must be a directory.
@@ -329,10 +348,10 @@ create client key value mbTTL = do
         [("value",value)] ++ ttlParam mbTTL
 
     case hr of
-        Left _ -> error "Unexpected error"
+        Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
         Right res -> return $ _resNode res
 
-
+{-
 -- | Wait for changes on the node at the given key.
 wait :: Client -> Key -> IO (Maybe Node)
 wait client key =
@@ -360,7 +379,7 @@ waitIndexRecursive client key index =
         [waitParam, waitIndexParam index, waitRecursiveParam]
 
 
-
+-}
 {-----------------------------------------------------------------------------
 
 Directories are non-leaf nodes which contain zero or more child nodes. When
