@@ -44,6 +44,7 @@ import           Data.Text (Text)
 import qualified Data.Text as T
 import           Data.Text.Encoding
 import           Data.Monoid
+import           Data.Maybe
 import           Data.ByteString.Lazy (ByteString)
 
 import           Control.Applicative
@@ -299,10 +300,10 @@ Public API
 -}
 
 
--- | Create a new client and initialize it with a list of seed machines. The
--- list must be non-empty.
-createClient :: [ Text ] -> IO Client
-createClient seed = return $ Client (head seed)
+-- | Create a new client and initialize it with a list of seed machines. If
+-- the list is empty Nothing is returned
+createClient :: [ Text ] -> IO (Maybe Client)
+createClient seed = return $ Client <$> (listToMaybe seed)
 
 
 
