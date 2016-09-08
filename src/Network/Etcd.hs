@@ -22,6 +22,7 @@ module Network.Etcd
     , get
     , set
     , create
+    , compareAndSwap
 --  , wait
 --  , waitIndex
 --  , waitRecursive
@@ -351,6 +352,21 @@ create client key value mbTTL = do
     case hr of
         Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
         Right res -> return $ _resNode res
+
+-- | Atomic compare-and-swap with 'prevValue' compare only.
+-- The key must not be a directory.
+compareAndSwap :: Client   -- ^ Etcd client
+               -> Key      -- ^ Key that isn't a directory
+               -> Value    -- ^ Previous value
+               -> Value    -- ^ New value
+               -> IO Node
+compareAndSwap client key prevValue value = do
+   hr <- runRequest $ httpPUT (keyUrl client key) $
+      [("prevValue", prevValue), ("value", value)]
+
+   case hr of
+      Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
+      Right res -> return $ _resNode res
 
 {-
 -- | Wait for changes on the node at the given key.
