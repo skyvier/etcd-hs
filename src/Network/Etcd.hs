@@ -21,6 +21,7 @@ module Network.Etcd
       -- * Low-level key operations
     , get
     , set
+    , getEither
     , create
     , compareAndSwap
 --  , wait
@@ -331,7 +332,14 @@ get client key = do
     case hr of
         Left (Error err) -> error (T.unpack err)
         Right res -> return $ _resNode res
-
+        
+-- | Get the node at the given key.
+getEither :: Client -> Key -> IO (Either Text Node)
+getEither client key = do
+    hr <- runRequest $ httpGET (keyUrl client key) []
+    return $! case hr of
+        Left (Error err) -> Left err
+        Right res -> Right $ _resNode res
 
 -- | Set the value at the given key.
 set :: Client -> Key -> Value -> Maybe TTL -> IO ( Node)
