@@ -9,6 +9,7 @@ This module contains an implementation of the etcd client.
 
 module Network.Etcd
     ( Client
+    , Credentials
     , createClient
 
       -- * Types
@@ -48,6 +49,7 @@ import           Data.Text.Encoding
 import           Data.Monoid
 import           Data.Maybe
 import           Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString as BL
 
 import           Control.Applicative
 import           Control.Exception
@@ -63,6 +65,7 @@ import           Prelude
 data Client = Client
     { leaderUrl :: !Text
       -- ^ The URL to the leader. HTTP requests are sent to this server.
+    , credentials :: Maybe Credentials
     }
 
 
@@ -232,18 +235,24 @@ throw an exception if the server is unreachable or not responding.
 -- A type synonym for a http response.
 type HR = Either Error Response
 
+type Credentials = (BL.ByteString, BL.ByteString)
+
 decodeResponseBody :: ByteString -> IO HR
-decodeResponseBody body = do
+decodeResponseBody body =
     return $ case eitherDecode body of
         Left e  -> Left $ Error (T.pack e)
         Right n -> Right n
 
+maybeAuthenticate :: Maybe Credentials -> Request -> Request
+maybeAuthenticate mcred req =
+   maybe req (\(u, p) -> applyBasicAuth u p req) mcred
 
-httpGET :: Text -> [(Text, Text)] -> IO HR
-httpGET url params = do
+httpGET :: Text -> [(Text, Text)] -> Maybe Credentials -> IO HR
+httpGET url params mcred = do
     req'  <- acceptJSON <$> parseUrl (T.unpack url)
     let req = setQueryString (map (\(k,v) -> (encodeUtf8 k, Just $ encodeUtf8 v)) params) $ req'
-    body <- responseBody <$> (withManager $ httpLbs req)
+        authReq = maybeAuthenticate mcred req
+    body <- responseBody <$> (withManager $ httpLbs authReq)
     decodeResponseBody body
 
   where
@@ -251,30 +260,31 @@ httpGET url params = do
     acceptJSON req = req { requestHeaders = acceptHeader : requestHeaders req }
 
 
-httpPUT :: Text -> [(Text, Text)] -> IO HR
-httpPUT url params = do
+httpPUT :: Text -> [(Text, Text)] -> Maybe Credentials -> IO HR
+httpPUT url params mcred = do
     req' <- parseUrl (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
-
-    body <- responseBody <$> (withManager $ httpLbs $ req { method = "PUT" })
+        authReq = maybeAuthenticate mcred req
+    body <- responseBody <$> (withManager $ httpLbs $ authReq { method = "PUT" })
     decodeResponseBody body
 
 
-httpPOST :: Text -> [(Text, Text)] -> IO HR
-httpPOST url params = do
+httpPOST :: Text -> [(Text, Text)] -> Maybe Credentials -> IO HR
+httpPOST url params mcred = do
     req' <- parseUrl (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
-
-    body <- responseBody <$> (withManager $ httpLbs $ req { method = "POST" })
+        authReq = maybeAuthenticate mcred req
+    body <- responseBody <$> (withManager $ httpLbs $ authReq { method = "POST" })
     decodeResponseBody body
 
 
 -- | Issue a DELETE request to the given url. Since DELETE requests don't have
 -- a body, the params are appended to the URL as a query string.
-httpDELETE :: Text -> [(Text, Text)] -> IO HR
-httpDELETE url params = do
+httpDELETE :: Text -> [(Text, Text)] -> Maybe Credentials -> IO HR
+httpDELETE url params mcred = do
     req  <- parseUrl $ T.unpack $ url <> (asQueryParams params)
-    body <- responseBody <$> (withManager $ httpLbs $ req { method = "DELETE" })
+    let authReq = maybeAuthenticate mcred req
+    body <- responseBody <$> (withManager $ httpLbs $ authReq { method = "DELETE" })
     decodeResponseBody body
 
   where
@@ -304,9 +314,9 @@ Public API
 
 -- | Create a new client and initialize it with a list of seed machines. If
 -- the list is empty Nothing is returned
-createClient :: [ Text ] -> IO (Maybe Client)
-createClient seed = return $ Client <$> (listToMaybe seed)
-
+createClient :: [ Text ] -> Maybe Credentials -> IO (Maybe Client)
+createClient seed mcred = 
+   return $ fmap (\f -> f mcred) (Client <$> (listToMaybe seed))
 
 
 {-----------------------------------------------------------------------------
@@ -326,9 +336,9 @@ waitIndexParam i = ("waitIndex", (T.pack $ show i))
 
 
 -- | Get the node at the given key.
-get :: Client -> Key -> IO (Node)
+get :: Client -> Key -> IO Node
 get client key = do
-    hr <- runRequest $ httpGET (keyUrl client key) []
+    hr <- runRequest $ httpGET (keyUrl client key) [] $ credentials client
     case hr of
         Left (Error err) -> error (T.unpack err)
         Right res -> return $ _resNode res
@@ -336,16 +346,15 @@ get client key = do
 -- | Get the node at the given key.
 getEither :: Client -> Key -> IO (Either Text Node)
 getEither client key = do
-    hr <- runRequest $ httpGET (keyUrl client key) []
+    hr <- runRequest $ httpGET (keyUrl client key) [] $ credentials client
     return $! case hr of
         Left (Error err) -> Left err
         Right res -> Right $ _resNode res
 
 -- | Set the value at the given key.
-set :: Client -> Key -> Value -> Maybe TTL -> IO ( Node)
+set :: Client -> Key -> Value -> Maybe TTL -> IO Node
 set client key value mbTTL = do
-    hr <- runRequest $ httpPUT (keyUrl client key) $
-        [("value",value)] ++ ttlParam mbTTL
+    hr <- runRequest $ httpPUT (keyUrl client key) ([("value",value)] ++ ttlParam mbTTL) $ credentials client
     case hr of
         Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
         Right res -> return $ _resNode res
@@ -354,9 +363,7 @@ set client key value mbTTL = do
 -- | Create a value in the given key. The key must be a directory.
 create :: Client -> Key -> Value -> Maybe TTL -> IO Node
 create client key value mbTTL = do
-    hr <- runRequest $ httpPOST (keyUrl client key) $
-        [("value",value)] ++ ttlParam mbTTL
-
+    hr <- runRequest $ httpPOST (keyUrl client key) ([("value",value)] ++ ttlParam mbTTL) $ credentials client
     case hr of
         Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
         Right res -> return $ _resNode res
@@ -369,9 +376,7 @@ compareAndSwap :: Client   -- ^ Etcd client
                -> Value    -- ^ New value
                -> IO Node
 compareAndSwap client key prevValue value = do
-   hr <- runRequest $ httpPUT (keyUrl client key) $
-      [("prevValue", prevValue), ("value", value)]
-
+   hr <- runRequest $ httpPUT (keyUrl client key) [("prevValue", prevValue), ("value", value)] (credentials client)
    case hr of
       Left (Error err) -> error $ "Unexpected error: " <> (T.unpack err)
       Right res -> return $ _resNode res
@@ -422,13 +427,13 @@ recursiveParam = [("recursive","true")]
 -- | Create a directory at the given key.
 createDirectory :: Client -> Key -> Maybe TTL -> IO ()
 createDirectory client key mbTTL =
-    void $ runRequest $ httpPUT (keyUrl client key) $ dirParam ++ ttlParam mbTTL
+    void $ runRequest $ httpPUT (keyUrl client key) (dirParam ++ ttlParam mbTTL) (credentials client)
 
 
 -- | List all nodes within the given directory.
 listDirectoryContents :: Client -> Key -> IO [Node]
 listDirectoryContents client key = do
-    hr <- runRequest $ httpGET (keyUrl client key) []
+    hr <- runRequest $ httpGET (keyUrl client key) [] $ credentials client
     case hr of
         Left _ -> return []
         Right res -> do
@@ -442,7 +447,7 @@ listDirectoryContents client key = do
 -- that directory 'Node's will not contain their children.
 listDirectoryContentsRecursive :: Client -> Key -> IO [Node]
 listDirectoryContentsRecursive client key = do
-    hr <- runRequest $ httpGET (keyUrl client key) recursiveParam
+    hr <- runRequest $ httpGET (keyUrl client key) recursiveParam $ credentials client
     case hr of
         Left _ -> return []
         Right res -> do
@@ -459,10 +464,10 @@ listDirectoryContentsRecursive client key = do
 -- can use 'removeDirectoryRecursive'.
 removeDirectory :: Client -> Key -> IO ()
 removeDirectory client key =
-    void $ runRequest $ httpDELETE (keyUrl client key) dirParam
+    void $ runRequest $ httpDELETE (keyUrl client key) dirParam $ credentials client
 
 
 -- | Remove the directory at the given key, including all its children.
 removeDirectoryRecursive :: Client -> Key -> IO ()
 removeDirectoryRecursive client key =
-    void $ runRequest $ httpDELETE (keyUrl client key) $ dirParam ++ recursiveParam
+    void $ runRequest $ httpDELETE (keyUrl client key) (dirParam ++ recursiveParam) $ credentials client
