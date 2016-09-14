@@ -72,19 +72,20 @@ data Client = Client
 
 -- | Exception within the Etcd library.
 data EtcdException = InvalidResponse Text
-                   | ValueNotFound
+                   | KeyNotFound
                    | ConnectionError HttpException
                    deriving Show
 instance Exception EtcdException
 
 convertToEtcdException :: HttpException -> EtcdException
-convertToEtcdException ex =
-   case ex of
-      (StatusCodeException status _ _) ->
-         if status == Http.status404
-            then ValueNotFound
-            else ConnectionError ex
-      _ -> ConnectionError ex
+convertToEtcdException ex@(StatusCodeException status _ _) =
+   if status == Http.status404 then KeyNotFound else ConnectionError ex
+convertToEtcdException ex = ConnectionError ex
+
+handleHttpException :: HttpException -> IO Response
+handleHttpException ex@(StatusCodeException status _ _) =
+   if status == Http.status404 then throwIO KeyNotFound else throwIO $ ConnectionError ex
+handleHttpException ex = throwIO $ ConnectionError ex
 
 -- | The version prefix used in URLs. The current client supports v2.
 versionPrefix :: Text
@@ -254,8 +255,8 @@ maybeAuthenticate mcred req =
    maybe req (\(u, p) -> applyBasicAuth u p req) mcred
 
 httpGET :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpGET url params mcred = mapException convertToEtcdException $ do
-    req'  <- acceptJSON <$> parseUrl (T.unpack url)
+httpGET url params mcred = handle handleHttpException $ do
+    req'  <- acceptJSON <$> parseUrlThrow (T.unpack url)
     let req = setQueryString (map (\(k,v) -> (encodeUtf8 k, Just $ encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq
@@ -265,16 +266,16 @@ httpGET url params mcred = mapException convertToEtcdException $ do
     acceptJSON req = req { requestHeaders = acceptHeader : requestHeaders req }
 
 httpPUT :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpPUT url params mcred = mapException convertToEtcdException $ do
-    req' <- parseUrl (T.unpack url)
+httpPUT url params mcred = handle handleHttpException $ do
+    req' <- parseUrlThrow (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq { method = "PUT" }
     decodeResponseBody $ responseBody res
 
 httpPOST :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpPOST url params mcred = mapException convertToEtcdException $ do
-    req' <- parseUrl (T.unpack url)
+httpPOST url params mcred = handle handleHttpException $ do
+    req' <- parseUrlThrow (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq { method = "POST" }
@@ -283,8 +284,8 @@ httpPOST url params mcred = mapException convertToEtcdException $ do
 -- | Issue a DELETE request to the given url. Since DELETE requests don't have
 -- a body, the params are appended to the URL as a query string.
 httpDELETE :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpDELETE url params mcred = mapException convertToEtcdException $ do
-    req  <- parseUrl $ T.unpack $ url <> (asQueryParams params)
+httpDELETE url params mcred = handle handleHttpException $ do
+    req  <- parseUrlThrow $ T.unpack $ url <> (asQueryParams params)
     let authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq { method = "DELETE" }
     decodeResponseBody $ responseBody res
@@ -433,7 +434,7 @@ listDirectoryContents client key = handle handleException $ do
        Just children -> return children
    where
       handleException :: EtcdException -> IO [Node]
-      handleException ValueNotFound = return []
+      handleException KeyNotFound = return []
       handleException ex = throwIO ex
 
 
@@ -450,7 +451,7 @@ listDirectoryContentsRecursive client key = handle handleExceptions $ do
        Just children -> return $ concatMap flatten children
    where
       handleExceptions :: EtcdException -> IO [Node]
-      handleExceptions ValueNotFound = return []
+      handleExceptions KeyNotFound = return []
       handleExceptions ex = throwIO ex
 
 
