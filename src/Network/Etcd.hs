@@ -256,7 +256,7 @@ maybeAuthenticate mcred req =
 
 httpGET :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
 httpGET url params mcred = handle handleHttpException $ do
-    req'  <- acceptJSON <$> parseUrlThrow (T.unpack url)
+    req'  <- acceptJSON <$> parseUrl (T.unpack url)
     let req = setQueryString (map (\(k,v) -> (encodeUtf8 k, Just $ encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq
@@ -267,7 +267,7 @@ httpGET url params mcred = handle handleHttpException $ do
 
 httpPUT :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
 httpPUT url params mcred = handle handleHttpException $ do
-    req' <- parseUrlThrow (T.unpack url)
+    req' <- parseUrl (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq { method = "PUT" }
@@ -275,7 +275,7 @@ httpPUT url params mcred = handle handleHttpException $ do
 
 httpPOST :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
 httpPOST url params mcred = handle handleHttpException $ do
-    req' <- parseUrlThrow (T.unpack url)
+    req' <- parseUrl (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq { method = "POST" }
@@ -285,7 +285,7 @@ httpPOST url params mcred = handle handleHttpException $ do
 -- a body, the params are appended to the URL as a query string.
 httpDELETE :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
 httpDELETE url params mcred = handle handleHttpException $ do
-    req  <- parseUrlThrow $ T.unpack $ url <> (asQueryParams params)
+    req  <- parseUrl $ T.unpack $ url <> (asQueryParams params)
     let authReq = maybeAuthenticate mcred req
     res <- withManager $ httpLbs authReq { method = "DELETE" }
     decodeResponseBody $ responseBody res
