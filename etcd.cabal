@@ -28,6 +28,7 @@ library
   build-depends:     http-conduit
   build-depends:     time
   build-depends:     text
+  build-depends:     http-types
 
   ghc-options:       -Wall
 
