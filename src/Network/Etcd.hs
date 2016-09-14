@@ -254,39 +254,39 @@ maybeAuthenticate mcred req =
    maybe req (\(u, p) -> applyBasicAuth u p req) mcred
 
 httpGET :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpGET url params mcred = do
+httpGET url params mcred = mapException convertToEtcdException $ do
     req'  <- acceptJSON <$> parseUrl (T.unpack url)
     let req = setQueryString (map (\(k,v) -> (encodeUtf8 k, Just $ encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
-    res <- mapException convertToEtcdException $ withManager $ httpLbs authReq
+    res <- withManager $ httpLbs authReq
     decodeResponseBody $ responseBody res
   where
     acceptHeader   = ("Accept","application/json")
     acceptJSON req = req { requestHeaders = acceptHeader : requestHeaders req }
 
 httpPUT :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpPUT url params mcred = do
+httpPUT url params mcred = mapException convertToEtcdException $ do
     req' <- parseUrl (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
-    res <- mapException convertToEtcdException $ withManager $ httpLbs authReq { method = "PUT" }
+    res <- withManager $ httpLbs authReq { method = "PUT" }
     decodeResponseBody $ responseBody res
 
 httpPOST :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpPOST url params mcred = do
+httpPOST url params mcred = mapException convertToEtcdException $ do
     req' <- parseUrl (T.unpack url)
     let req = urlEncodedBody (map (\(k,v) -> (encodeUtf8 k, encodeUtf8 v)) params) $ req'
         authReq = maybeAuthenticate mcred req
-    res <- mapException convertToEtcdException $ withManager $ httpLbs authReq { method = "POST" }
+    res <- withManager $ httpLbs authReq { method = "POST" }
     decodeResponseBody $ responseBody res
 
 -- | Issue a DELETE request to the given url. Since DELETE requests don't have
 -- a body, the params are appended to the URL as a query string.
 httpDELETE :: Text -> [(Text, Text)] -> Maybe Credentials -> IO Response
-httpDELETE url params mcred = do
+httpDELETE url params mcred = mapException convertToEtcdException $ do
     req  <- parseUrl $ T.unpack $ url <> (asQueryParams params)
     let authReq = maybeAuthenticate mcred req
-    res <- mapException convertToEtcdException $ withManager $ httpLbs authReq { method = "DELETE" }
+    res <- withManager $ httpLbs authReq { method = "DELETE" }
     decodeResponseBody $ responseBody res
   where
     asQueryParams [] = ""
