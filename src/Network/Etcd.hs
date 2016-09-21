@@ -25,6 +25,7 @@ module Network.Etcd
     , set
     , getEither
     , create
+    , delete
     , compareAndSwap
 --  , wait
 --  , waitIndex
@@ -43,7 +44,7 @@ module Network.Etcd
 import           Data.Aeson hiding (Value, Error)
 import           Data.Time.Clock
 import           Data.Time.LocalTime
-import           Data.List
+import           Data.List hiding (delete)
 import           Data.Text (Text)
 import qualified Data.Text as T
 import           Data.Text.Encoding
@@ -366,6 +367,11 @@ create :: Client -> Key -> Value -> Maybe TTL -> IO Node
 create client key value mbTTL = do
     res <- httpPOST (keyUrl client key) ([("value",value)] ++ ttlParam mbTTL) $ credentials client
     return $ _resNode res
+
+-- | Detele the given key.
+delete :: Client -> Key -> IO ()
+delete client key = 
+   void $ httpDELETE (keyUrl client key) [] (credentials client)
 
 -- | Atomic compare-and-swap with 'prevValue' compare only.
 -- The key must not be a directory.
