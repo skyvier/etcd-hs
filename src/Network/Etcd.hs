@@ -8,7 +8,7 @@ This module contains an implementation of the etcd client.
 -}
 
 module Network.Etcd
-    ( Client
+    ( Client(..)
     , Credentials
     , createClient
 
