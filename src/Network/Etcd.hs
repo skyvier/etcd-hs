@@ -73,19 +73,22 @@ data Client = Client
 -- | Exception within the Etcd library.
 data EtcdException = InvalidResponse Text
                    | KeyNotFound
+                   | PreconditionFailed
                    | ConnectionError HttpException
                    deriving Show
 instance Exception EtcdException
 
 convertToEtcdException :: HttpException -> EtcdException
-convertToEtcdException ex@(StatusCodeException status _ _) =
-   if status == Http.status404 then KeyNotFound else ConnectionError ex
+convertToEtcdException ex@(StatusCodeException status _ _) = 
+   if status == Http.status404 
+      then KeyNotFound 
+      else if status == Http.status412
+         then PreconditionFailed
+         else ConnectionError ex
 convertToEtcdException ex = ConnectionError ex
 
 handleHttpException :: HttpException -> IO Response
-handleHttpException ex@(StatusCodeException status _ _) =
-   if status == Http.status404 then throwIO KeyNotFound else throwIO $ ConnectionError ex
-handleHttpException ex = throwIO $ ConnectionError ex
+handleHttpException = throwIO . convertToEtcdException
 
 -- | The version prefix used in URLs. The current client supports v2.
 versionPrefix :: Text
